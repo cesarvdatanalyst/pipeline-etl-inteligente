@@ -1,0 +1,7 @@
+.env
+entrada_sucios/
+historial_sucios/
+salida_limpios/
+__pycache__/
+*.xlsx
+*.csv

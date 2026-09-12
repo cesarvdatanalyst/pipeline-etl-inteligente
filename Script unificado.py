@@ -1,59 +1,47 @@
+import io
 import os
 import sys
-import shutil
 from datetime import datetime
-from dotenv import load_dotenv
+import telebot
+from flask import Flask, request
 import pandas as pd
 
-# 1. Configurar rutas absolutas
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
+# ========================================== #
+# ⚙️ CONFIGURACIÓN INICIAL (BOT)             #
+# ========================================== #
+# 🔐 PRÁCTICA PROFESIONAL: Cargamos el token de forma segura desde Render
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
-DIR_ENTRADA = os.getenv("DIR_ENTRADA", os.path.join(SCRIPT_DIR, "entrada_sucios"))
-DIR_HISTORIAL = os.getenv("DIR_HISTORIAL", os.path.join(SCRIPT_DIR, "historial_sucios"))
-DIR_SALIDA_CLIENTE = os.getenv("DIR_SALIDA_CLIENTE", os.path.join(SCRIPT_DIR, "salida_limpios"))
+if not TOKEN:
+    print("ERROR: No se encontró la variable TELEGRAM_TOKEN", file=sys.stderr)
 
-# ==========================================
-# 🛡️ CONTROL DE ACCESO: CLIENTES CON PAGO ACTIVO
-# ==========================================
-# Aquí añadirás los correos de los clientes que ya te pagaron la suscripción
-CLIENTES_VIP = [
-    "cliente1@gmail.com",
-    "creador_famoso@hotmail.com",
-    "tu_correo_de_prueba@gmail.com"  # Agrega tu correo aquí para hacer pruebas
-]
+bot = telebot.TeleBot(TOKEN, threaded=False)
+app = Flask(__name__)
 
-def comprobar_suscripcion(correo_usuario):
-    """Verifica si el usuario tiene permiso para usar la herramienta."""
-    correo_limpio = str(correo_usuario).strip().lower()
-    if correo_limpio in CLIENTES_VIP:
-        print(f"✅ [ACCESO CONCEDIDO]: Suscripción activa para {correo_limpio}")
+# ========================================== #
+# 🛡️ CONTROL DE ACCESO: USERNAMES VIP        #
+# ========================================== #
+# 🔐 Cargamos la lista de clientes autorizados desde el servidor
+CLIENTES_VIP_RAW = os.environ.get("CLIENTES_VIP", "")
+CLIENTES_VIP = [u.strip().lower() for u in CLIENTES_VIP_RAW.split(",") if u.strip()]
+
+def comprobar_suscripcion(username):
+    if not username:
+        return False
+    # Si la lista está vacía en el servidor, permitimos acceso para pruebas iniciales
+    if not CLIENTES_VIP:
         return True
-    else:
-        print(f"❌ [ACCESO DENEGADO]: El correo {correo_limpio} no tiene una suscripción activa.")
-        return False
+    return str(username).strip().lower() in CLIENTES_VIP
 
-def inicializar_entorno():
-    """Crea las carpetas necesarias si no existen."""
-    for carpeta in [DIR_ENTRADA, DIR_HISTORIAL, DIR_SALIDA_CLIENTE]:
-        os.makedirs(carpeta, exist_ok=True)
-
-def limpiar_y_organizar_inteligente(ruta_archivo_sucio, ruta_archivo_limpio, correo_cliente):
-    """
-    Lee un archivo desorganizado, valida la suscripción del cliente,
-    detecta el modelo de negocio automáticamente y procesa los datos.
-    """
-    # VALIDACIÓN DE SEGURIDAD ANTES DE PROCESAR
-    if not comprobar_suscripcion(correo_cliente):
-        print("⛔ Proceso abortado por falta de pago o credenciales inválidas.")
-        return False
-
-    print(f"📊 Analizando estructura y metadatos del archivo...")
+# ========================================== #
+# 🧼 MOTOR DE LIMPIEZA INTELIGENTE (RAM)     #
+# ========================================== #
+def limpiar_y_organizar_inteligente(file_bytes, file_name):
     try:
-        if ruta_archivo_sucio.endswith('.csv'):
-            df = pd.read_csv(ruta_archivo_sucio)
+        if file_name.endswith('.csv'):
+            df = pd.read_csv(io.BytesIO(file_bytes))
         else:
-            df = pd.read_excel(ruta_archivo_sucio)
+            df = pd.read_excel(io.BytesIO(file_bytes))
 
         # === LIMPIEZA UNIVERSAL ===
         df.dropna(how='all', inplace=True)
@@ -61,90 +49,97 @@ def limpiar_y_organizar_inteligente(ruta_archivo_sucio, ruta_archivo_limpio, cor
         for col in df.select_dtypes(include=['object']).columns:
             df[col] = df[col].astype(str).str.strip()
 
-        # === MOTOR DE DETECCIÓN INTELIGENTE DE NEGOCIO ===
-        columnas_actuales = [str(col).lower() for col in df.columns]
+        df.columns = df.columns.str.lower()
+        columnas_actuales = list(df.columns)
 
-        # REGLA 1: Creador de Contenido
-        if 'views' in columnas_actuales or 'likes' in columnas_actuales or 'reproducciones' in columnas_actuales:
-            print("🎥 [DETECTADO]: Modelo Creador de Contenido / Redes Sociales.")
-            df.columns = df.columns.str.lower()
+        # === MOTOR DE DETECCIÓN INTELIGENTE ===
+        # REGLA 1: Creador de Contenido (Métricas de Redes)
+        if any(col in columnas_actuales for col in ['views', 'likes', 'reproducciones']):
             columnas_interaccion = ['likes', 'comments', 'shares', 'saves']
             columnas_vistas = ['views', 'impressions']
-
             for col in columnas_interaccion + columnas_vistas:
                 if col in df.columns:
                     df[col] = df[col].fillna(0).astype(int)
-
             if 'views' in df.columns:
                 interacciones_totales = sum(df[col] for col in columnas_interaccion if col in df.columns)
                 df['engagement_rate_%'] = (interacciones_totales / df['views']) * 100
                 df['engagement_rate_%'] = df['engagement_rate_%'].fillna(0).round(2)
-
             if 'title' in df.columns:
                 def clasificar_video(titulo):
                     t = str(titulo).lower()
                     if any(x in t for x in ['vlog', 'dia', 'rutina']): return 'Vlog Personal'
-                    elif any(x in t for x in ['tutorial', 'como', 'tips', 'aprende']): return 'Educativo'
-                    elif any(x in t for x in ['review', 'reseña', 'probando']): return 'Reseña de Producto'
+                    if any(x in t for x in ['tutorial', 'como', 'tips', 'aprende']): return 'Educativo'
+                    if any(x in t for x in ['review', 'reseña', 'probando']): return 'Reseña de Producto'
                     return 'Entretenimiento / Otros'
                 df['categoria_contenido'] = df['title'].apply(clasificar_video)
 
-        # REGLA 2: Ventas
+        # REGLA 2: Ventas y PYMEs
         elif any(col in columnas_actuales for col in ['precio', 'total', 'cantidad', 'sku', 'monto']):
-            print("🛍️ [DETECTADO]: Modelo Tienda / Ventas Comerciales.")
             columnas_numericas = df.select_dtypes(include=['number']).columns
             df[columnas_numericas] = df[columnas_numericas].fillna(0)
-            df.columns = df.columns.str.lower()
             if 'precio' in df.columns and 'cantidad' in df.columns and 'total' not in df.columns:
                 df['total_calculado'] = df['precio'] * df['cantidad']
-
         else:
-            print("⚠️ [AVISO]: Estructura no identificada. Limpieza estándar aplicada.")
             columnas_numericas = df.select_dtypes(include=['number']).columns
             df[columnas_numericas] = df[columnas_numericas].fillna(0)
 
-        # Guardar el entregable final
-        df.to_excel(ruta_archivo_limpio, index=False)
-        print(f"✨ ¡Procesamiento finalizado con éxito!")
-        return True
+        # Guardado óptimo en memoria binaria
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
+        output.seek(0)
+        return output
+    except Exception:
+        return None
 
-    except Exception as e:
-        print(f"❌ Error crítico en el pipeline de datos: {e}")
-        return False
+# ========================================== #
+# 🤖 CONTROLADOR DE EVENTOS DE TELEGRAM      #
+# ========================================== #
+@bot.message_handler(commands=['start', 'help'])
+def enviar_bienvenida(message):
+    bot.reply_to(message, "¡Hola! Bienvenido al Limpiador Inteligente de Datos. 🚀\n\n"
+                          "Envíame un archivo **Excel (.xlsx)** o **CSV** desorganizado "
+                          "y me encargaré de limpiarlo y estructurarlo automáticamente.")
 
-def ejecutar_proceso_diario(correo_del_usuario_actual):
-    inicializar_entorno()
-
-    nombre_archivo_objetivo = "reporte_mensual_sucio.xlsx"
-    ruta_sucio = os.path.join(DIR_ENTRADA, nombre_archivo_objetivo)
-
-    if not os.path.exists(ruta_sucio):
-        print(f"⚠️ Esperando archivo '{nombre_archivo_objetivo}' en la carpeta de entrada...")
+@bot.message_handler(content_types=['document'])
+def gestionar_documento(message):
+    username = message.from_user.username
+    if not comprobar_suscripcion(username):
+        bot.reply_to(message, "⛔ **Acceso Denegado:** Tu usuario no cuenta con una suscripción activa.\n"
+                              "Para contratar el servicio, contacta al administrador.")
         return
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    nombre_limpio = f"reporte_final_procesado_{timestamp}.xlsx"
-    nombre_historial = f"historial_sucio_{timestamp}.xlsx"
+    file_name = message.document.file_name
+    if not (file_name.endswith('.xlsx') or file_name.endswith('.csv')):
+        bot.reply_to(message, "⚠️ Por favor, envía únicamente archivos en formato Excel (.xlsx) o .CSV")
+        return
 
-    ruta_limpio = os.path.join(DIR_SALIDA_CLIENTE, nombre_limpio)
-    ruta_historial = os.path.join(DIR_HISTORIAL, nombre_historial)
+    bot.reply_to(message, "📊 Archivo recibido. Analizando estructura y procesando datos...")
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        archivo_limpio = limpiar_y_organizar_inteligente(downloaded_file, file_name)
+        
+        if archivo_limpio:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            nombre_salida = f"reporte_procesado_{timestamp}.xlsx"
+            bot.send_document(message.chat.id, archivo_limpio, visible_file_name=nombre_salida)
+            bot.send_message(message.chat.id, "✨ ¡Procesamiento finalizado con éxito! Aquí tienes tu reporte limpio.")
+        else:
+            bot.reply_to(message, "❌ Hubo un error procesando la estructura interna de tu archivo.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ocurrió un fallo en el servidor: {e}")
 
-    # Pasamos el correo del usuario para validar antes de limpiar
-    exito = limpiar_y_organizar_inteligente(ruta_sucio, ruta_limpio, correo_del_usuario_actual)
+# ========================================== #
+# 🌐 CONFIGURACIÓN WEBHOOK                   #
+# ========================================== #
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.get_data():
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+    return '', 200
 
-    if exito:
-        try:
-            shutil.move(ruta_sucio, ruta_historial)
-            print(f"✅ Pipeline ejecutado correctamente.")
-        except Exception as e:
-            print(f"⚠️ Archivo procesado pero no se movió al historial: {e}")
-
-if __name__ == "__main__":
-    print(f"=== 🚀 Iniciando Pipeline ETL Seguro: {datetime.now()} ===")
-
-    # SIMULACIÓN: Aquí simulamos el correo que ingresa el usuario.
-    # Para probar el bloqueo, cambia este correo por uno que NO esté en la lista CLIENTES_VIP.
-    correo_simulado = "tu_correo_de_prueba@gmail.com"
-
-    ejecutar_proceso_diario(correo_simulado)
-    print("=== 🏁 Tarea Finalizada ===")
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)

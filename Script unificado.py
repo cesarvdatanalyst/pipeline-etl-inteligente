@@ -131,7 +131,7 @@ def gestionar_documento(message):
         bot.reply_to(message, f"❌ Ocurrió un fallo en el servidor: {e}")
 
 # ========================================== #
-# 🌐 CONFIGURACIÓN WEBHOOK                   #
+# 🌐 CONFIGURACIÓN WEBHOOK & PRODUCCIÓN       #
 # ========================================== #
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -141,5 +141,14 @@ def webhook():
         bot.process_new_updates([update])
     return '', 200
 
+# Añadimos una ruta raíz de control (Health Check)
+# Esto evitará que Render marque tu servicio como "fallido" al arrancar
+@app.route('/')
+def index():
+    return "Bot en línea y funcionando correctamente 🚀", 200
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    # Render asigna automáticamente un puerto dinámico mediante la variable de entorno 'PORT'
+    puerto = int(os.environ.get("PORT", 5000))
+    # Usamos 0.0.0.0 para que sea accesible externamente desde la red de Render
+    app.run(host='0.0.0.0', port=puerto)

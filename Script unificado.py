@@ -9,7 +9,7 @@ import pandas as pd
 # ========================================== #
 # ⚙️ CONFIGURACIÓN INICIAL (BOT)             #
 # ========================================== #
-# 🔐 PRÁCTICA PROFESIONAL: Cargamos el token de forma segura desde Render
+# 🔐 PRÁCTICA PROFESIONAL: El token se lee de forma segura desde el servidor
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
 if not TOKEN:
@@ -21,7 +21,7 @@ app = Flask(__name__)
 # ========================================== #
 # 🛡️ CONTROL DE ACCESO: USERNAMES VIP        #
 # ========================================== #
-# 🔐 Cargamos la lista de clientes autorizados desde el servidor
+# 🔐 Cargamos la lista de clientes autorizados de forma privada
 CLIENTES_VIP_RAW = os.environ.get("CLIENTES_VIP", "")
 CLIENTES_VIP = [u.strip().lower() for u in CLIENTES_VIP_RAW.split(",") if u.strip()]
 

@@ -141,14 +141,26 @@ def webhook():
         bot.process_new_updates([update])
     return '', 200
 
-# Añadimos una ruta raíz de control (Health Check)
-# Esto evitará que Render marque tu servicio como "fallido" al arrancar
+# Ruta raíz de control (Health Check)
 @app.route('/')
 def index():
     return "Bot en línea y funcionando correctamente 🚀", 200
 
+# Función encargada de enlazar automáticamente con la API de Telegram
+def conectar_webhook_automatico():
+    URL_RENDER = "https://onrender.com"
+    try:
+        bot.remove_webhook()
+        bot.set_webhook(url=f"{URL_RENDER}/webhook")
+        print("✅ Webhook de Telegram vinculado con éxito desde el script")
+    except Exception as e:
+        print(f"❌ Error al vincular el Webhook de forma automática: {e}", file=sys.stderr)
+
 if __name__ == '__main__':
-    # Render asigna automáticamente un puerto dinámico mediante la variable de entorno 'PORT'
+    # Configuración de arranque para desarrollo local
+    conectar_webhook_automatico()
     puerto = int(os.environ.get("PORT", 5000))
-    # Usamos 0.0.0.0 para que sea accesible externamente desde la red de Render
     app.run(host='0.0.0.0', port=puerto)
+
+# Llamada fuera del bloque __main__ requerida para producción (Gunicorn en Render)
+conectar_webhook_automatico()

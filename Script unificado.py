@@ -148,19 +148,24 @@ def index():
 
 # Función encargada de enlazar automáticamente con la API de Telegram
 def conectar_webhook_automatico():
-    URL_RENDER = "https://onrender.com"
+    # Detecta de forma dinámica la URL que Render le asigna a tu servidor web
+    URL_RENDER = os.environ.get("RENDER_EXTERNAL_URL")
+    
+    if not URL_RENDER:
+        URL_RENDER = "http://localhost:5000"
+        
     try:
         bot.remove_webhook()
-        bot.set_webhook(url=f"{URL_RENDER}/webhook")
-        print("✅ Webhook de Telegram vinculado con éxito desde el script")
+        url_final = f"{URL_RENDER.rstrip('/')}/webhook"
+        bot.set_webhook(url=url_final)
+        print(f"✅ Webhook de Telegram vinculado con éxito a: {url_final}")
     except Exception as e:
         print(f"❌ Error al vincular el Webhook de forma automática: {e}", file=sys.stderr)
 
 if __name__ == '__main__':
-    # Configuración de arranque para desarrollo local
     conectar_webhook_automatico()
     puerto = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=puerto)
 
-# Llamada fuera del bloque __main__ requerida para producción (Gunicorn en Render)
+# Llamada requerida por el servidor de producción (Gunicorn) en Render
 conectar_webhook_automatico()

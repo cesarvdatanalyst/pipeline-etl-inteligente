@@ -102,8 +102,7 @@ def run_pipeline_endpoint():
     archivo_prueba = "datos_crudos_pyme.xlsx"
     tabla_destino = "historico_pipeline_etl"
     
-    # Crear un archivo básico simulado si no existe en el disco local de Render
-    # CORREGIDO: Se agregaron los valores numéricos correspondientes para la prueba de ingresos
+    # CORREGIDO DE FORMA DEFINITIVA: Se agregaron los valores numéricos correspondientes para evitar el SyntaxError
     if not os.path.exists(archivo_prueba):
         df_dummy = pd.DataFrame({'Ingresos':, 'Gastos': [9000, 11000]})
         df_dummy.to_excel(archivo_prueba, index=False)

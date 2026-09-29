@@ -102,10 +102,12 @@ def run_pipeline_endpoint():
     archivo_prueba = "datos_crudos_pyme.xlsx"
     tabla_destino = "historico_pipeline_etl"
     
-    # CORREGIDO DE FORMA DEFINITIVA: Se agregaron los valores numéricos correspondientes para evitar el SyntaxError
+    # Validamos si el archivo físico real existe para ser procesado
     if not os.path.exists(archivo_prueba):
-        df_dummy = pd.DataFrame({'Ingresos':, 'Gastos': [9000, 11000]})
-        df_dummy.to_excel(archivo_prueba, index=False)
+        return jsonify({
+            "status": "error", 
+            "message": f"Falta el archivo base '{archivo_prueba}' en el servidor para ejecutar el pipeline."
+        }), 400
         
     try:
         df_limpio = pipeline_etl(archivo_prueba)
@@ -120,6 +122,6 @@ def run_pipeline_endpoint():
 
 # Bloque de ejecución local estándar
 if __name__ == "__main__":
-    # Render asignará un puerto dinámico mediante la variable de entorno PORT
     puerto = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=puerto)
+    

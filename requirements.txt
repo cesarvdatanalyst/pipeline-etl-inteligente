@@ -3,3 +3,5 @@ pyTelegramBotAPI
 pandas
 openpyxl
 gunicorn
+sqlalchemy
+psycopg2-binary

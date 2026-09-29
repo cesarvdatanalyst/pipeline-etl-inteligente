@@ -1,171 +1,119 @@
-import io
 import os
-import sys
-from datetime import datetime
-import telebot
-from flask import Flask, request
 import pandas as pd
+from datetime import datetime
+from sqlalchemy import create_engine
+from dotenv import load_dotenv
 
-# ========================================== #
-# ⚙️ CONFIGURACIÓN INICIAL (BOT)             #
-# ========================================== #
-# 🔐 PRÁCTICA PROFESIONAL: El token se lee de forma segura desde el servidor
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
+# Cargar variables de entorno para desarrollo local
+load_dotenv()
 
-if not TOKEN:
-    print("ERROR: No se encontró la variable TELEGRAM_TOKEN", file=sys.stderr)
-
-bot = telebot.TeleBot(TOKEN, threaded=False)
-app = Flask(__name__)
-
-# ========================================== #
-# 🛡️ CONTROL DE ACCESO: USERNAMES VIP        #
-# ========================================== #
-# 🔐 Cargamos la lista de clientes autorizados de forma privada
-CLIENTES_VIP_RAW = os.environ.get("CLIENTES_VIP", "")
-CLIENTES_VIP = [u.strip().lower() for u in CLIENTES_VIP_RAW.split(",") if u.strip()]
-
-def comprobar_suscripcion(username):
-    if not username:
-        return False
-    # Si la lista está vacía en el servidor, permitimos acceso para pruebas iniciales
-    if not CLIENTES_VIP:
-        return True
-    return str(username).strip().lower() in CLIENTES_VIP
-
-# ========================================== #
-# 🧼 MOTOR DE LIMPIEZA INTELIGENTE (RAM)     #
-# ========================================== #
-def limpiar_y_organizar_inteligente(file_bytes, file_name):
-    try:
-        if file_name.endswith('.csv'):
-            df = pd.read_csv(io.BytesIO(file_bytes))
-        else:
-            df = pd.read_excel(io.BytesIO(file_bytes))
-
-        # === LIMPIEZA UNIVERSAL ===
-        df.dropna(how='all', inplace=True)
-        df.drop_duplicates(inplace=True)
-        for col in df.select_dtypes(include=['object']).columns:
-            df[col] = df[col].astype(str).str.strip()
-
-        df.columns = df.columns.str.lower()
-        columnas_actuales = list(df.columns)
-
-        # === MOTOR DE DETECCIÓN INTELIGENTE ===
-        # REGLA 1: Creador de Contenido (Métricas de Redes)
-        if any(col in columnas_actuales for col in ['views', 'likes', 'reproducciones']):
-            columnas_interaccion = ['likes', 'comments', 'shares', 'saves']
-            columnas_vistas = ['views', 'impressions']
-            for col in columnas_interaccion + columnas_vistas:
-                if col in df.columns:
-                    df[col] = df[col].fillna(0).astype(int)
-            if 'views' in df.columns:
-                interacciones_totales = sum(df[col] for col in columnas_interaccion if col in df.columns)
-                df['engagement_rate_%'] = (interacciones_totales / df['views']) * 100
-                df['engagement_rate_%'] = df['engagement_rate_%'].fillna(0).round(2)
-            if 'title' in df.columns:
-                def clasificar_video(titulo):
-                    t = str(titulo).lower()
-                    if any(x in t for x in ['vlog', 'dia', 'rutina']): return 'Vlog Personal'
-                    if any(x in t for x in ['tutorial', 'como', 'tips', 'aprende']): return 'Educativo'
-                    if any(x in t for x in ['review', 'reseña', 'probando']): return 'Reseña de Producto'
-                    return 'Entretenimiento / Otros'
-                df['categoria_contenido'] = df['title'].apply(clasificar_video)
-
-        # REGLA 2: Ventas y PYMEs
-        elif any(col in columnas_actuales for col in ['precio', 'total', 'cantidad', 'sku', 'monto']):
-            columnas_numericas = df.select_dtypes(include=['number']).columns
-            df[columnas_numericas] = df[columnas_numericas].fillna(0)
-            if 'precio' in df.columns and 'cantidad' in df.columns and 'total' not in df.columns:
-                df['total_calculado'] = df['precio'] * df['cantidad']
-        else:
-            columnas_numericas = df.select_dtypes(include=['number']).columns
-            df[columnas_numericas] = df[columnas_numericas].fillna(0)
-
-        # Guardado óptimo en memoria binaria
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
-        output.seek(0)
-        return output
-    except Exception:
-        return None
-
-# ========================================== #
-# 🤖 CONTROLADOR DE EVENTOS DE TELEGRAM      #
-# ========================================== #
-@bot.message_handler(commands=['start', 'help'])
-def enviar_bienvenida(message):
-    bot.reply_to(message, "¡Hola! Bienvenido al Limpiador Inteligente de Datos. 🚀\n\n"
-                          "Envíame un archivo **Excel (.xlsx)** o **CSV** desorganizado "
-                          "y me encargaré de limpiarlo y estructurarlo automáticamente.")
-
-@bot.message_handler(content_types=['document'])
-def gestionar_documento(message):
-    username = message.from_user.username
-    if not comprobar_suscripcion(username):
-        bot.reply_to(message, "⛔ **Acceso Denegado:** Tu usuario no cuenta con una suscripción activa.\n"
-                              "Para contratar el servicio, contacta al administrador.")
-        return
-
-    file_name = message.document.file_name
-    if not (file_name.endswith('.xlsx') or file_name.endswith('.csv')):
-        bot.reply_to(message, "⚠️ Por favor, envía únicamente archivos en formato Excel (.xlsx) o .CSV")
-        return
-
-    bot.reply_to(message, "📊 Archivo recibido. Analizando estructura y procesando datos...")
-    try:
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        archivo_limpio = limpiar_y_organizar_inteligente(downloaded_file, file_name)
-        
-        if archivo_limpio:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            nombre_salida = f"reporte_procesado_{timestamp}.xlsx"
-            bot.send_document(message.chat.id, archivo_limpio, visible_file_name=nombre_salida)
-            bot.send_message(message.chat.id, "✨ ¡Procesamiento finalizado con éxito! Aquí tienes tu reporte limpio.")
-        else:
-            bot.reply_to(message, "❌ Hubo un error procesando la estructura interna de tu archivo.")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Ocurrió un fallo en el servidor: {e}")
-
-# ========================================== #
-# 🌐 CONFIGURACIÓN WEBHOOK & PRODUCCIÓN       #
-# ========================================== #
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    if request.get_data():
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-    return '', 200
-
-# Ruta raíz de control (Health Check)
-@app.route('/')
-def index():
-    return "Bot en línea y funcionando correctamente 🚀", 200
-
-# Función encargada de enlazar automáticamente con la API de Telegram
-def conectar_webhook_automatico():
-    # Detecta de forma dinámica la URL que Render le asigna a tu servidor web
-    URL_RENDER = os.environ.get("RENDER_EXTERNAL_URL")
+def pipeline_etl(ruta_archivo):
+    """
+    Fase 1 y 2: Extracción y Transformación Inteligente.
+    Detecta el modelo de negocio, limpia anomalías y calcula KPIs específicos.
+    """
+    print(f"⏳ Iniciando procesamiento del archivo: {ruta_archivo}")
     
-    if not URL_RENDER:
-        URL_RENDER = "http://localhost:5000"
+    try:
+        # Extracción de datos crudos
+        df = pd.read_excel(ruta_archivo)
+    except Exception as e:
+        raise ValueError(f"Error al leer el archivo Excel: {e}")
+    
+    # Motor de Detección Inteligente mediante inspección de columnas
+    columnas = set(df.columns)
+    
+    # --- MODELO 1: REDES SOCIALES ---
+    if {'Interacciones', 'Alcance', 'Seguidores'}.issubset(columnas):
+        print("📊 Modelo detectado: Redes Sociales / Creadores de Contenido")
+        
+        # Data Cleaning: Tratamiento de nulos en métricas críticas
+        df['Interacciones'] = df['Interacciones'].fillna(0)
+        df['Alcance'] = df['Alcance'].fillna(0)
+        
+        # Transformación: Cálculo automatizado de KPI
+        # Evitamos división por cero usando un condicional o reemplazo
+        df['Engagement Rate %'] = df.apply(
+            lambda row: (row['Interacciones'] / row['Alcance'] * 100) if row['Alcance'] > 0 else 0, 
+            axis=1
+        )
+        df['Tipo_Modelo'] = 'Redes Sociales'
+
+    # --- MODELO 2: FINANZAS / PYMES ---
+    elif {'Ingresos', 'Gastos'}.issubset(columnas):
+        print("💰 Modelo detectado: Finanzas / Pymes")
+        
+        # Data Cleaning: Tratamiento de nulos numéricos
+        df['Ingresos'] = df['Ingresos'].fillna(0)
+        df['Gastos'] = df['Gastos'].fillna(0)
+        
+        # Transformación: Cálculo de KPIs Financieros
+        df['Margen de Ganancia %'] = df.apply(
+            lambda row: ((row['Ingresos'] - row['Gastos']) / row['Ingresos'] * 100) if row['Ingresos'] > 0 else 0, 
+            axis=1
+        )
+        df['Tipo_Modelo'] = 'Finanzas Pyme'
+        
+    else:
+        print("❓ Modelo de negocio no identificado de forma automática.")
+        df['Tipo_Modelo'] = 'Genérico / No Clasificado'
+
+    # --- LIMPIEZA GENERAL Y AUDITORÍA ---
+    # Eliminar duplicados exactos para asegurar la calidad de datos
+    df = df.drop_duplicates(keep='first')
+    
+    # Agregar marca de tiempo para auditoría de datos (Data Compliance)
+    df['Fecha_Procesamiento'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    print("🧹 Transformación y limpieza general finalizada.")
+    return df
+
+
+def load_data_to_supabase(df, table_name):
+    """
+    Fase 3: Carga Persistente SQL.
+    Sube el DataFrame limpio a la nube para mitigar reinicios de servidores como Render.
+    """
+    print("🚀 Conectando con la base de datos de Supabase...")
+    
+    # Capturar la URI segura desde el servidor
+    db_url = os.getenv("DATABASE_URL")
+    
+    if not db_url:
+        raise ValueError("❌ Error: La variable de entorno 'DATABASE_URL' no está configurada.")
         
     try:
-        bot.remove_webhook()
-        url_final = f"{URL_RENDER.rstrip('/')}/webhook"
-        bot.set_webhook(url=url_final)
-        print(f"✅ Webhook de Telegram vinculado con éxito a: {url_final}")
+        # Corrección de protocolo por compatibilidad con SQLAlchemy >= 1.4
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+            
+        # Crear motor de conexión relacional
+        engine = create_engine(db_url)
+        
+        # Carga masiva con Pandas. 
+        # 'append' añade registros históricos sin borrar lo que ya existía
+        df.to_sql(table_name, con=engine, if_exists='append', index=False)
+        print(f"✅ ¡Éxito absoluto! {len(df)} filas respaldadas permanentemente en la tabla '{table_name}'.")
+        
     except Exception as e:
-        print(f"❌ Error al vincular el Webhook de forma automática: {e}", file=sys.stderr)
+        print(f"❌ Fallo crítico en la carga SQL: {e}")
 
-if __name__ == '__main__':
-    conectar_webhook_automatico()
-    puerto = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=puerto)
 
-# Llamada requerida por el servidor de producción (Gunicorn) en Render
-conectar_webhook_automatico()
+# --- Orquestador Principal del Pipeline ---
+if __name__ == "__main__":
+    # Nombre del archivo Excel de entrada en tu servidor
+    ARCHIVO_ENTRADA = "datos_crudos_pyme.xlsx" 
+    
+    # Nombre de la tabla donde se guardará todo de forma persistente
+    TABLA_DESTINO = "historico_pipeline_etl"
+    
+    try:
+        # Ejecutar Extracción y Transformación
+        df_resultado = pipeline_etl(ARCHIVO_ENTRADA)
+        
+        # Ejecutar Carga Persistente en Postgres
+        load_data_to_supabase(df_resultado, TABLA_DESTINO)
+        
+    except Exception as error:
+        print(f"⚠ El pipeline se detuvo debido a un error en el flujo: {error}")
+        

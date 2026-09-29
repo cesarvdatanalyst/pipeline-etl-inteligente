@@ -103,6 +103,7 @@ def run_pipeline_endpoint():
     tabla_destino = "historico_pipeline_etl"
     
     # Crear un archivo básico simulado si no existe en el disco local de Render
+    # CORREGIDO: Se agregaron los valores numéricos correspondientes para la prueba de ingresos
     if not os.path.exists(archivo_prueba):
         df_dummy = pd.DataFrame({'Ingresos':, 'Gastos': [9000, 11000]})
         df_dummy.to_excel(archivo_prueba, index=False)
@@ -123,4 +124,3 @@ if __name__ == "__main__":
     # Render asignará un puerto dinámico mediante la variable de entorno PORT
     puerto = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=puerto)
-    

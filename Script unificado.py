@@ -62,17 +62,20 @@ def pipeline_etl(ruta_archivo):
 def load_data_to_supabase(df, table_name):
     """
     Fase 3 del Pipeline: Carga Masiva y Persistente en Supabase (PostgreSQL).
-    Resuelve de forma definitiva el borrado de datos por reinicio en Render.
+    CORREGIDO: Implementa la sintaxis estricta de Driver 'postgresql+psycopg://' para SQLAlchemy 2.0.
     """
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
         raise ValueError("La variable de entorno 'DATABASE_URL' no se encuentra configurada en el servidor.")
         
     try:
-        # Estandarización de protocolo compatible con SQLAlchemy >= 1.4
+        # Ajuste dinámico del prefijo para forzar el uso del driver moderno psycopg3
         if db_url.startswith("postgres://"):
-            db_url = db_url.replace("postgres://", "postgresql://", 1)
+            db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
+        elif db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
             
+        # Crear motor con el conector explícito
         engine = create_engine(db_url)
         
         # 'if_exists=append' asegura que los nuevos reportes se sumen al histórico existente
@@ -124,4 +127,4 @@ def run_pipeline_endpoint():
 if __name__ == "__main__":
     puerto = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=puerto)
-    
+        

@@ -1,119 +1,126 @@
 import os
 import pandas as pd
 from datetime import datetime
+from flask import Flask, jsonify
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 
-# Cargar variables de entorno para desarrollo local
+# 1. Inicialización de la aplicación Flask requerida por Render
+app = Flask(__name__)
+
+# 2. Carga segura de variables de entorno (Base de Datos)
 load_dotenv()
 
 def pipeline_etl(ruta_archivo):
     """
-    Fase 1 y 2: Extracción y Transformación Inteligente.
-    Detecta el modelo de negocio, limpia anomalías y calcula KPIs específicos.
+    Fases 1 y 2 del Pipeline: Extracción y Transformación Inteligente.
+    Clasifica automáticamente el modelo comercial y genera métricas limpias.
     """
-    print(f"⏳ Iniciando procesamiento del archivo: {ruta_archivo}")
-    
+    print(f"⏳ Procesando archivo de datos: {ruta_archivo}")
     try:
-        # Extracción de datos crudos
         df = pd.read_excel(ruta_archivo)
     except Exception as e:
-        raise ValueError(f"Error al leer el archivo Excel: {e}")
+        raise ValueError(f"Fallo al leer la estructura del Excel: {e}")
     
-    # Motor de Detección Inteligente mediante inspección de columnas
     columnas = set(df.columns)
     
-    # --- MODELO 1: REDES SOCIALES ---
+    # --- MODELO INDUSTRIAL: REDES SOCIALES ---
     if {'Interacciones', 'Alcance', 'Seguidores'}.issubset(columnas):
-        print("📊 Modelo detectado: Redes Sociales / Creadores de Contenido")
-        
-        # Data Cleaning: Tratamiento de nulos en métricas críticas
+        print("📊 Segmento Detectado: Redes Sociales y Creadores")
         df['Interacciones'] = df['Interacciones'].fillna(0)
         df['Alcance'] = df['Alcance'].fillna(0)
-        
-        # Transformación: Cálculo automatizado de KPI
-        # Evitamos división por cero usando un condicional o reemplazo
         df['Engagement Rate %'] = df.apply(
-            lambda row: (row['Interacciones'] / row['Alcance'] * 100) if row['Alcance'] > 0 else 0, 
+            lambda r: (r['Interacciones'] / r['Alcance'] * 100) if r['Alcance'] > 0 else 0, 
             axis=1
         )
         df['Tipo_Modelo'] = 'Redes Sociales'
 
-    # --- MODELO 2: FINANZAS / PYMES ---
+    # --- MODELO INDUSTRIAL: FINANZAS / PYMES ---
     elif {'Ingresos', 'Gastos'}.issubset(columnas):
-        print("💰 Modelo detectado: Finanzas / Pymes")
-        
-        # Data Cleaning: Tratamiento de nulos numéricos
+        print("💰 Segmento Detectado: Finanzas y Pymes Comerciales")
         df['Ingresos'] = df['Ingresos'].fillna(0)
         df['Gastos'] = df['Gastos'].fillna(0)
-        
-        # Transformación: Cálculo de KPIs Financieros
         df['Margen de Ganancia %'] = df.apply(
-            lambda row: ((row['Ingresos'] - row['Gastos']) / row['Ingresos'] * 100) if row['Ingresos'] > 0 else 0, 
+            lambda r: ((r['Ingresos'] - r['Gastos']) / r['Ingresos'] * 100) if r['Ingresos'] > 0 else 0, 
             axis=1
         )
         df['Tipo_Modelo'] = 'Finanzas Pyme'
         
     else:
-        print("❓ Modelo de negocio no identificado de forma automática.")
+        print("❓ Estructura de modelo genérica o no identificada.")
         df['Tipo_Modelo'] = 'Genérico / No Clasificado'
 
-    # --- LIMPIEZA GENERAL Y AUDITORÍA ---
-    # Eliminar duplicados exactos para asegurar la calidad de datos
+    # Data Quality: Eliminación de registros duplicados redundantes
     df = df.drop_duplicates(keep='first')
     
-    # Agregar marca de tiempo para auditoría de datos (Data Compliance)
+    # Auditoría Legal: Estampa de tiempo obligatoria (Data Compliance)
     df['Fecha_Procesamiento'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    print("🧹 Transformación y limpieza general finalizada.")
     return df
 
 
 def load_data_to_supabase(df, table_name):
     """
-    Fase 3: Carga Persistente SQL.
-    Sube el DataFrame limpio a la nube para mitigar reinicios de servidores como Render.
+    Fase 3 del Pipeline: Carga Masiva y Persistente en Supabase (PostgreSQL).
+    Resuelve de forma definitiva el borrado de datos por reinicio en Render.
     """
-    print("🚀 Conectando con la base de datos de Supabase...")
-    
-    # Capturar la URI segura desde el servidor
     db_url = os.getenv("DATABASE_URL")
-    
     if not db_url:
-        raise ValueError("❌ Error: La variable de entorno 'DATABASE_URL' no está configurada.")
+        raise ValueError("La variable de entorno 'DATABASE_URL' no se encuentra configurada en el servidor.")
         
     try:
-        # Corrección de protocolo por compatibilidad con SQLAlchemy >= 1.4
+        # Estandarización de protocolo compatible con SQLAlchemy >= 1.4
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
             
-        # Crear motor de conexión relacional
         engine = create_engine(db_url)
         
-        # Carga masiva con Pandas. 
-        # 'append' añade registros históricos sin borrar lo que ya existía
+        # 'if_exists=append' asegura que los nuevos reportes se sumen al histórico existente
         df.to_sql(table_name, con=engine, if_exists='append', index=False)
-        print(f"✅ ¡Éxito absoluto! {len(df)} filas respaldadas permanentemente en la tabla '{table_name}'.")
-        
+        print(f"🚀 Base de datos sincronizada: {len(df)} registros insertados en '{table_name}'.")
+        return True
     except Exception as e:
-        print(f"❌ Fallo crítico en la carga SQL: {e}")
+        print(f"❌ Fallo crítico de conexión en la carga SQL: {e}")
+        return False
 
 
-# --- Orquestador Principal del Pipeline ---
-if __name__ == "__main__":
-    # Nombre del archivo Excel de entrada en tu servidor
-    ARCHIVO_ENTRADA = "datos_crudos_pyme.xlsx" 
+# --- RUTAS DE LA API FLASK (Requeridas para el despliegue exitoso en Render) ---
+
+@app.route('/')
+def home():
+    """Ruta base para validar que el servicio web de Render está operando en vivo."""
+    return jsonify({
+        "status": "online",
+        "message": "Intelligent ETL Data Pipeline is running successfully.",
+        "environment": "Production Cloud (Render + Supabase)"
+    }), 200
+
+
+@app.route('/run-pipeline')
+def run_pipeline_endpoint():
+    """Endpoint de control para disparar el procesamiento de datos bajo demanda."""
+    archivo_prueba = "datos_crudos_pyme.xlsx"
+    tabla_destino = "historico_pipeline_etl"
     
-    # Nombre de la tabla donde se guardará todo de forma persistente
-    TABLA_DESTINO = "historico_pipeline_etl"
-    
+    # Crear un archivo básico simulado si no existe en el disco local de Render
+    if not os.path.exists(archivo_prueba):
+        df_dummy = pd.DataFrame({'Ingresos':, 'Gastos': [9000, 11000]})
+        df_dummy.to_excel(archivo_prueba, index=False)
+        
     try:
-        # Ejecutar Extracción y Transformación
-        df_resultado = pipeline_etl(ARCHIVO_ENTRADA)
-        
-        # Ejecutar Carga Persistente en Postgres
-        load_data_to_supabase(df_resultado, TABLA_DESTINO)
-        
+        df_limpio = pipeline_etl(archivo_prueba)
+        success = load_data_to_supabase(df_limpio, tabla_destino)
+        if success:
+            return jsonify({"status": "success", "rows_processed": len(df_limpio)}), 200
+        else:
+            return jsonify({"status": "error", "message": "Fallo en la sincronización SQL"}), 500
     except Exception as error:
-        print(f"⚠ El pipeline se detuvo debido a un error en el flujo: {error}")
-        
+        return jsonify({"status": "error", "message": str(error)}), 500
+
+
+# Bloque de ejecución local estándar
+if __name__ == "__main__":
+    # Render asignará un puerto dinámico mediante la variable de entorno PORT
+    puerto = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=puerto)
+    
